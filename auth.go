@@ -3,14 +3,16 @@
 package apple
 
 import (
+	"crypto/ecdsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -71,7 +73,7 @@ type appleAuth struct {
 
 // Setup and return a new AppleAuth for validation of tokens.
 func New(appID, teamID, keyID, keyPath string) (*appleAuth, error) {
-	keyContent, err := ioutil.ReadFile(keyPath)
+	keyContent, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, err
 	}
@@ -86,13 +88,37 @@ func New(appID, teamID, keyID, keyPath string) (*appleAuth, error) {
 	}, nil
 }
 
-func (a *appleAuth) clientSecret() (string, error) {
+// Base64 key format if the key is an env variable: "base64 -i AuthKey_ABCDE12345.p8"
+func NewB64(appID, teamID, keyID, b64 string) (*appleAuth, error) {
+	keyContent, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return nil, err
+	}
+
+	return &appleAuth{
+		KeyID:      keyID,
+		TeamID:     teamID,
+		AppID:      appID,
+		KeyContent: keyContent,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
+	}, nil
+}
+
+func (a *appleAuth) parsePrivateKey() (*ecdsa.PrivateKey, error) {
 	block, _ := pem.Decode(a.KeyContent)
 	if block == nil {
-		return "", errors.New("empty block after decoding")
+		return nil, errors.New("empty block after decoding")
 	}
 
 	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	return privateKey.(*ecdsa.PrivateKey), nil
+}
+
+func (a *appleAuth) clientSecret() (string, error) {
+	privateKey, err := a.parsePrivateKey()
 	if err != nil {
 		return "", err
 	}
@@ -105,14 +131,12 @@ func (a *appleAuth) clientSecret() (string, error) {
 		Subject:   a.AppID,
 		Audience:  appleAudience,
 	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, &claims)
 	token.Header["alg"] = "ES256"
 	token.Header["kid"] = a.KeyID
-	clientSecret, err := token.SignedString(privateKey)
-	if err != nil {
-		return "", err
-	}
-	return clientSecret, nil
+
+	return token.SignedString(privateKey)
 }
 
 func (a *appleAuth) ValidateCode(code string) (*TokenResponse, error) {
