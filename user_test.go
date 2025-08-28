@@ -3,6 +3,7 @@ package apple
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -10,11 +11,12 @@ import (
 func TestGetUserInfoFromIDToken(t *testing.T) {
 	jwt := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiZW1haWwiOiJhbmVtYWlsQHlvdXJkb21haW4iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiaXNfcHJpdmF0ZV9lbWFpbCI6ZmFsc2UsInJlYWxfdXNlcl9zdGF0dXMiOjIsImlhdCI6MTUxNjIzOTAyMn0.M9kQlH4Ybi3-iEYZ3TxdouU8Gjgt2IyfMvATsnFisP4"
 	expectedUser := &AppleUser{
-		UID:            "1234567890",
+		Subject:        "1234567890",
 		Email:          "anemail@yourdomain",
 		EmailVerified:  true,
 		IsPrivateEmail: false,
 		RealUserStatus: RealUserStatusLikelyReal,
+		IssuedAt:       time.Unix(1516239022, 0),
 	}
 
 	au, err := GetUserInfoFromIDToken(jwt)
