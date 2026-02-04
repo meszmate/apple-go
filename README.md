@@ -1,150 +1,326 @@
 # apple-go
 
-`apple-go` is a unofficial Golang package to validate authorization tokens and manage the authorization of Apple Sign In server side. It provides utility functions and models to retrieve user information and validate authorization codes.
+[![Go Reference](https://pkg.go.dev/badge/github.com/meszmate/apple-go.svg)](https://pkg.go.dev/github.com/meszmate/apple-go)
+[![CI](https://github.com/meszmate/apple-go/actions/workflows/ci.yml/badge.svg)](https://github.com/meszmate/apple-go/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
+Go package for Apple Sign-In token validation and CloudKit server-to-server API.
 
 ## Installation
-
-Install with go modules:
 
 ```
 go get github.com/meszmate/apple-go
 ```
 
-## Usage
+---
 
-The package follow the Go approach to resolve problems, the usage is pretty straightforward, you start initiating a client with:
+## Apple Sign-In
+
+### Setup
+
+From a key file:
 
 ```go
-package main
+auth, err := apple.New("com.example.app", "TEAM123456", "KEYID12345", "/path/to/AuthKey.p8")
+```
 
-import (
-    "github.com/meszmate/apple-go"
+From a base64-encoded key (environment variable):
+
+```go
+auth, err := apple.NewB64("com.example.app", "TEAM123456", "KEYID12345", os.Getenv("APPLE_KEY"))
+```
+
+### Authorization URL
+
+```go
+cfg := apple.AuthorizeURLConfig{
+    ClientID:    "com.example.app.login",
+    RedirectURI: "https://example.com/auth/apple/callback",
+    Scope:       []string{"email", "name"},
+    State:       "csrf-123",
+    Nonce:       "nonce-abc",
+}
+
+loginURL := apple.AuthorizeURL(cfg)
+// Redirect the user to loginURL
+```
+
+### Validate Authorization Code
+
+```go
+// From a mobile app
+tokenResponse, err := auth.ValidateCode("<AUTHORIZATION-CODE>")
+
+// From a web app with redirect URI
+tokenResponse, err := auth.ValidateCodeWithRedirectURI("<AUTHORIZATION-CODE>", "https://example.com/callback")
+```
+
+### Validate Refresh Token
+
+```go
+tokenResponse, err := auth.ValidateRefreshToken("<REFRESH-TOKEN>")
+```
+
+### Get User Info from ID Token
+
+```go
+user, err := apple.GetUserInfoFromIDToken(tokenResponse.IDToken)
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Println(user.Subject) // Unique user identifier
+fmt.Println(user.Email)   // User's email
+```
+
+---
+
+## CloudKit
+
+Server-to-server API for Apple CloudKit. Requires a CloudKit server-to-server key from the Apple Developer portal.
+
+### Setup
+
+From a key file:
+
+```go
+ck, err := apple.NewCloudKit(
+    "CloudKitKeyID",
+    "iCloud.com.example.app",
+    apple.CKEnvironmentDevelopment,
+    "/path/to/CloudKitKey.p8",
 )
+```
 
-func main() {
-    appleAuth, err := apple.New("<APP-ID>", "<TEAM-ID>", "<KEY-ID>", "/path/to/apple-sign-in-key.p8")
-    if err != nil {
-        panic(err)
+From a base64-encoded key:
+
+```go
+ck, err := apple.NewCloudKitB64(
+    "CloudKitKeyID",
+    "iCloud.com.example.app",
+    apple.CKEnvironmentProduction,
+    os.Getenv("CLOUDKIT_KEY"),
+)
+```
+
+### Records
+
+**Query records:**
+
+```go
+resp, err := ck.QueryRecords(apple.CKDatabasePublic, &apple.CKQueryRequest{
+    Query: apple.CKQuery{
+        RecordType: "Todo",
+        FilterBy: []apple.CKFilter{
+            {
+                Comparator: "EQUALS",
+                FieldName:  "status",
+                FieldValue: &apple.CKField{Value: "active", Type: "STRING"},
+            },
+        },
+        SortBy: []apple.CKSort{
+            {FieldName: "createdAt", Ascending: false},
+        },
+    },
+    ResultsLimit: 50,
+})
+```
+
+**Create a record:**
+
+```go
+resp, err := ck.ModifyRecords(apple.CKDatabasePublic, &apple.CKRecordsModifyRequest{
+    Operations: []apple.CKRecordOperation{
+        {
+            OperationType: apple.CKOperationCreate,
+            Record: apple.CKRecord{
+                RecordType: "Todo",
+                Fields: map[string]*apple.CKField{
+                    "title":  {Value: "Buy groceries", Type: "STRING"},
+                    "done":   {Value: 0, Type: "INT64"},
+                },
+            },
+        },
+    },
+})
+```
+
+**Update a record:**
+
+```go
+resp, err := ck.ModifyRecords(apple.CKDatabasePublic, &apple.CKRecordsModifyRequest{
+    Operations: []apple.CKRecordOperation{
+        {
+            OperationType: apple.CKOperationUpdate,
+            Record: apple.CKRecord{
+                RecordName:      "record-uuid",
+                RecordType:      "Todo",
+                RecordChangeTag: "existing-change-tag",
+                Fields: map[string]*apple.CKField{
+                    "done": {Value: 1, Type: "INT64"},
+                },
+            },
+        },
+    },
+})
+```
+
+**Delete a record:**
+
+```go
+resp, err := ck.ModifyRecords(apple.CKDatabasePublic, &apple.CKRecordsModifyRequest{
+    Operations: []apple.CKRecordOperation{
+        {
+            OperationType: apple.CKOperationDelete,
+            Record: apple.CKRecord{
+                RecordName:      "record-uuid",
+                RecordType:      "Todo",
+                RecordChangeTag: "existing-change-tag",
+            },
+        },
+    },
+})
+```
+
+**Lookup records by name:**
+
+```go
+resp, err := ck.LookupRecords(apple.CKDatabasePublic, &apple.CKRecordsLookupRequest{
+    Records: []apple.CKRecord{
+        {RecordName: "record-uuid-1"},
+        {RecordName: "record-uuid-2"},
+    },
+})
+```
+
+**Get record changes:**
+
+```go
+resp, err := ck.RecordChanges(apple.CKDatabasePublic, &apple.CKRecordChangesRequest{
+    ZoneID:    apple.CKZoneID{ZoneName: "_defaultZone"},
+    SyncToken: "previous-sync-token",
+})
+// Use resp.SyncToken for the next call
+```
+
+### Zones
+
+```go
+// List all zones
+zones, err := ck.ListZones(apple.CKDatabasePrivate)
+
+// Create a zone
+resp, err := ck.ModifyZones(apple.CKDatabasePrivate, []apple.CKZone{
+    {ZoneID: apple.CKZoneID{ZoneName: "MyCustomZone"}},
+}, apple.CKOperationCreate)
+
+// Delete a zone
+resp, err := ck.ModifyZones(apple.CKDatabasePrivate, []apple.CKZone{
+    {ZoneID: apple.CKZoneID{ZoneName: "MyCustomZone"}},
+}, apple.CKOperationDelete)
+
+// Get zone changes
+changes, err := ck.ZoneChanges(apple.CKDatabasePrivate, &apple.CKZoneChangesRequest{
+    ZoneIDs: []apple.CKZoneID{{ZoneName: "_defaultZone"}},
+})
+```
+
+### Subscriptions
+
+```go
+// List subscriptions
+subs, err := ck.ListSubscriptions(apple.CKDatabasePublic)
+
+// Create a subscription with push notifications
+resp, err := ck.ModifySubscriptions(apple.CKDatabasePublic, &apple.CKSubscriptionsModifyRequest{
+    Operations: []apple.CKSubscriptionOperation{
+        {
+            OperationType: apple.CKOperationCreate,
+            Subscription: apple.CKSubscription{
+                SubscriptionType: "query",
+                Query:            &apple.CKQuery{RecordType: "Todo"},
+                FiresOn:          []string{"create", "update", "delete"},
+                NotificationInfo: &apple.CKNotificationInfo{
+                    AlertBody: "A todo was changed",
+                    ShouldSendContentAvailable: true,
+                },
+            },
+        },
+    },
+})
+
+// Delete a subscription
+resp, err := ck.ModifySubscriptions(apple.CKDatabasePublic, &apple.CKSubscriptionsModifyRequest{
+    Operations: []apple.CKSubscriptionOperation{
+        {
+            OperationType: apple.CKOperationDelete,
+            Subscription:  apple.CKSubscription{SubscriptionID: "sub-id"},
+        },
+    },
+})
+```
+
+### Assets
+
+```go
+// Request an upload URL
+uploadResp, err := ck.UploadAssets(apple.CKDatabasePublic, &apple.CKAssetsUploadRequest{
+    Tokens: []apple.CKAssetUploadRequest{
+        {RecordType: "Photo", FieldName: "image"},
+    },
+})
+
+// Upload the file data to the returned URL
+file, _ := os.Open("photo.jpg")
+defer file.Close()
+// Use the cloudKit struct's UploadAssetData method or PUT directly
+```
+
+### Users
+
+```go
+// Get current user
+user, err := ck.GetCurrentUser(apple.CKDatabasePublic)
+
+// Discover all users
+users, err := ck.DiscoverAllUsers(apple.CKDatabasePublic)
+
+// Lookup users by email
+users, err := ck.LookupUsers(apple.CKDatabasePublic, &apple.CKUserLookupRequest{
+    EmailAddresses: []string{"user@example.com"},
+})
+```
+
+### APNs Tokens
+
+```go
+resp, err := ck.CreateTokens(apple.CKDatabasePublic, &apple.CKTokensCreateRequest{
+    Tokens: []apple.CKAPNsToken{
+        {APNsToken: "device-token-hex", APNsEnvironment: "production"},
+    },
+})
+```
+
+### Error Handling
+
+All CloudKit methods return `*CKError` on failure:
+
+```go
+resp, err := ck.QueryRecords(apple.CKDatabasePublic, req)
+if err != nil {
+    var ckErr *apple.CKError
+    if errors.As(err, &ckErr) {
+        fmt.Println("CloudKit error:", ckErr.Code)
+        fmt.Println("Reason:", ckErr.Reason)
+        if ckErr.RetryAfter > 0 {
+            fmt.Println("Retry after:", ckErr.RetryAfter, "seconds")
+        }
     }
 }
 ```
 
-Using base64 env variable:
+---
 
-```go
-package main
+## License
 
-import (
-    "log"
-    "os"
-
-    "github.com/meszmate/apple-go"
-)
-
-func main() {
-    // Load the key from an environment variable encoded with:
-    //   base64 -i AuthKey_ABCDE12345.p8
-    //   export APPLE_KEY=<base64-string>
-    auth, err := apple.NewB64(
-        "com.example.app",        // App ID / Bundle ID
-        "TEAM123456",             // Apple Team ID
-        "KEY_ABCDE12345",         // Key ID
-        os.Getenv("APPLE_KEY"),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // use auth ...
-    _ = auth
-}
-```
-
-Generate the Apple Sign-In URL and send the user to it:
-
-```go
-package main
-
-import (
-    "fmt"
-    "github.com/meszmate/apple-go"
-)
-
-func main() {
-    cfg := apple.AuthorizeURLConfig{
-        ClientID:     "com.example.app.login",        // Services ID
-        RedirectURI:  "https://example.com/auth/apple/callback",
-        Scope:        []string{"email", "name"},
-        State:        "csrf-123",
-        Nonce:        "nonce-abc",
-    }
-
-    loginURL := apple.AuthorizeURL(cfg)
-    fmt.Println("Redirect the user to:", loginURL) 
-    // output: Redirect the user to: https://appleid.apple.com/auth/authorize?response_type=code&response_mode=form_post&client_id=com.example.app.login&redirect_uri=https%3A%2F%2Fexample.com%2Fauth%2Fapple%2Fcallback&state=csrf-123&nonce=nonce-abc&scope=email+name
-}
-```
-
-To validate an authorization code, retrieving refresh and access tokens:
-
-```go
-package main
-
-import (
-    "github.com/meszmate/apple-go"
-)
-
-func main() {
-    appleAuth, err := apple.New("<APP-ID>", "<TEAM-ID>", "<KEY-ID>", "/path/to/apple-sign-in-key.p8")
-    if err != nil {
-        panic(err)
-    }
-
-    // Validate authorization code from a mobile app.
-    tokenResponse, err := appleAuth.ValidateCode("<AUTHORIZATION-CODE>")
-    if err != nil {
-        panic(err)
-    }
-
-    // Validate authorization code from web app with redirect uri.
-    tokenResponse, err := appleAuth.ValidateCodeWithRedirectURI("<AUTHORIZATION-CODE>", "https://redirect-uri")
-    if err != nil {
-        panic(err)
-    }
-}
-```
-
-The returned `tokenResponse` provides the access token, to make requests on behalf of the user with Apple servers, the refresh token, to retrieve a new access token after expiration, trought the `ValidateRefreshToken` method, and the id token, which is a JWT encoded string with user information. To retrieve the user information from this id token we provide a utility function `GetUserInfoFromIDToken`:
-
-```go
-package main
-
-import (
-    "fmt"
-
-    "github.com/meszmate/apple-go"
-)
-
-func main() {
-    appleAuth, err := apple.New("<APP-ID>", "<TEAM-ID>", "<KEY-ID>", "/path/to/apple-sign-in-key.p8")
-    if err != nil {
-        panic(err)
-    }
-
-    // Validate authorization code from a mobile app.
-    tokenResponse, err := appleAuth.ValidateCode("<AUTHORIZATION-CODE>")
-    if err != nil {
-        panic(err)
-    }
-
-    user, err := apple.GetUserInfoFromIDToken(tokenResponse.idToken)
-    if err != nil {
-        panic(err)
-    }
-
-    // User Apple unique identification.
-    fmt.Println(user.UID)
-    // User email if the user provided it.
-    fmt.Println(user.Email)
-}
-```
+MIT

@@ -53,7 +53,7 @@ func AuthorizeURL(cfg AuthorizeURLConfig) string {
 	if cfg.ResponseType != "" {
 		responseType = string(cfg.ResponseType)
 	} else {
-		responseMode = string(ResponseTypeCodeID)
+		responseType = string(ResponseTypeCodeID)
 	}
 
 	q := url.Values{}

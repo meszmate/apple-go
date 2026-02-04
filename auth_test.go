@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"testing"
@@ -20,7 +20,7 @@ type MockedHTTPClient struct {
 
 // Mocked function PostForm that does not call any server, just return the expected response.
 func (m *MockedHTTPClient) PostForm(url string, data url.Values) (resp *http.Response, err error) {
-	args := m.Mock.Called(url, data)
+	args := m.Called(url, data)
 
 	resArg := args.Get(0)
 	resp, ok := resArg.(*http.Response)
@@ -43,7 +43,7 @@ func TestValidateRequest(t *testing.T) {
 	mockedHTTPClient.On("PostForm", validationEndpoint, form).Return(
 		&http.Response{
 			StatusCode: 200,
-			Body:       ioutil.NopCloser(bytes.NewReader(tokenResponseBody)),
+			Body:       io.NopCloser(bytes.NewReader(tokenResponseBody)),
 		},
 		nil,
 	)
@@ -82,7 +82,7 @@ func TestValidateCode(t *testing.T) {
 	mockedHTTPClient.On("PostForm", validationEndpoint, reqForm).Return(
 		&http.Response{
 			StatusCode: 200,
-			Body:       ioutil.NopCloser(bytes.NewReader(tokenResponseBody)),
+			Body:       io.NopCloser(bytes.NewReader(tokenResponseBody)),
 		},
 		nil,
 	)
@@ -116,7 +116,7 @@ func TestValidateCodeWithRedirectURI(t *testing.T) {
 	mockedHTTPClient.On("PostForm", validationEndpoint, reqForm).Return(
 		&http.Response{
 			StatusCode: 200,
-			Body:       ioutil.NopCloser(bytes.NewReader(tokenResponseBody)),
+			Body:       io.NopCloser(bytes.NewReader(tokenResponseBody)),
 		},
 		nil,
 	)
@@ -148,7 +148,7 @@ func TestValidateRefreshToken(t *testing.T) {
 	mockedHTTPClient.On("PostForm", validationEndpoint, reqForm).Return(
 		&http.Response{
 			StatusCode: 200,
-			Body:       ioutil.NopCloser(bytes.NewReader(tokenResponseBody)),
+			Body:       io.NopCloser(bytes.NewReader(tokenResponseBody)),
 		},
 		nil,
 	)

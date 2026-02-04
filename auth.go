@@ -83,7 +83,7 @@ func New(appID, teamID, keyID, keyPath string) (*appleAuth, error) {
 		AppID:      appID,
 		KeyContent: keyContent,
 		httpClient: &http.Client{
-			Timeout: http.DefaultClient.Timeout,
+			Timeout: 10 * time.Second,
 		},
 	}, nil
 }
@@ -104,8 +104,8 @@ func NewB64(appID, teamID, keyID, b64 string) (*appleAuth, error) {
 	}, nil
 }
 
-func (a *appleAuth) parsePrivateKey() (*ecdsa.PrivateKey, error) {
-	block, _ := pem.Decode(a.KeyContent)
+func parseECPrivateKey(keyContent []byte) (*ecdsa.PrivateKey, error) {
+	block, _ := pem.Decode(keyContent)
 	if block == nil {
 		return nil, errors.New("empty block after decoding")
 	}
@@ -115,6 +115,10 @@ func (a *appleAuth) parsePrivateKey() (*ecdsa.PrivateKey, error) {
 		return nil, err
 	}
 	return privateKey.(*ecdsa.PrivateKey), nil
+}
+
+func (a *appleAuth) parsePrivateKey() (*ecdsa.PrivateKey, error) {
+	return parseECPrivateKey(a.KeyContent)
 }
 
 func (a *appleAuth) clientSecret() (string, error) {
