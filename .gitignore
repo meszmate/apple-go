@@ -1,3 +1,30 @@
-# Test coverage files.
+# macOS
+.DS_Store
+
+# Go binaries and build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test binary
+*.test
+
+# Go coverage
 coverage.out
 coverage.html
+
+# Go vendor (if not committed)
+vendor/
+
+# IDE / editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
