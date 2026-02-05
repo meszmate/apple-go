@@ -4,7 +4,7 @@
 [![CI](https://github.com/meszmate/apple-go/actions/workflows/ci.yml/badge.svg)](https://github.com/meszmate/apple-go/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-Go package for Apple Sign-In token validation and CloudKit server-to-server API.
+Go package for Apple Sign-In token validation, App Store Server API v2, App Store Server Notifications, and CloudKit server-to-server API.
 
 ## Installation
 
@@ -71,6 +71,176 @@ if err != nil {
 
 fmt.Println(user.Subject) // Unique user identifier
 fmt.Println(user.Email)   // User's email
+```
+
+---
+
+## App Store Server Notifications
+
+Parse and verify App Store Server Notifications (V1 and V2) with JWS signature verification against the Apple Root CA.
+
+### Setup
+
+```go
+asn := apple.NewAppStoreNotifications()
+```
+
+### Parse V1 Notification
+
+```go
+notification, err := asn.ParseV1(requestBody)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(notification.NotificationType)
+fmt.Println(notification.UnifiedReceipt.LatestReceiptInfo[0].TransactionID)
+```
+
+### Parse V2 Notification
+
+```go
+notification, err := asn.ParseV2(requestBody)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(notification.NotificationType) // e.g. "SUBSCRIBED"
+fmt.Println(notification.Subtype)          // e.g. "INITIAL_BUY"
+```
+
+### Decode Signed Transaction / Renewal Info
+
+```go
+txn, err := asn.DecodeTransactionInfo(notification.Data.SignedTransactionInfo)
+renewal, err := asn.DecodeRenewalInfo(notification.Data.SignedRenewalInfo)
+```
+
+---
+
+## App Store Server API v2
+
+Full HTTP client for the App Store Server API v2. Supports all 12 endpoints with JWT Bearer authentication.
+
+### Setup
+
+From a key file:
+
+```go
+api, err := apple.NewAppStoreServerAPI(
+    "issuer-id",
+    "key-id",
+    "com.example.app",
+    "/path/to/SubscriptionKey.p8",
+    false, // true for sandbox
+)
+```
+
+From a base64-encoded key:
+
+```go
+api, err := apple.NewAppStoreServerAPIB64(
+    "issuer-id",
+    "key-id",
+    "com.example.app",
+    os.Getenv("APPSTORE_KEY"),
+    false,
+)
+```
+
+### Transactions
+
+```go
+// Get transaction info
+txnResp, err := api.GetTransactionInfo("transaction-id")
+
+// Get transaction history
+historyResp, err := api.GetTransactionHistory("original-transaction-id", &apple.ASTransactionHistoryParams{
+    ProductID: "com.example.sub.monthly",
+    Sort:      "DESCENDING",
+})
+
+// Send consumption info
+err = api.SendConsumptionInfo("original-transaction-id", &apple.ASConsumptionRequest{
+    AccountTenure:     3,
+    ConsumptionStatus: 0,
+    CustomerConsented: true,
+    DeliveryStatus:    0,
+    Platform:          1,
+    PlayTime:          1,
+    UserStatus:        0,
+})
+```
+
+### Subscriptions
+
+```go
+// Get all subscription statuses
+statuses, err := api.GetAllSubscriptionStatuses("original-transaction-id")
+
+// Extend a subscription
+extResp, err := api.ExtendSubscription("original-transaction-id", &apple.ASExtendSubscriptionRequest{
+    ExtendByDays:      30,
+    ExtendReasonCode:  0,
+    RequestIdentifier: "unique-request-id",
+})
+
+// Mass extend subscriptions
+massResp, err := api.MassExtendSubscriptions(&apple.ASMassExtendRequest{
+    ExtendByDays:           30,
+    ExtendReasonCode:       0,
+    RequestIdentifier:      "unique-request-id",
+    ProductID:              "com.example.sub.monthly",
+    StorefrontCountryCodes: []string{"USA", "GBR"},
+})
+
+// Check mass extension status
+statusResp, err := api.GetExtensionStatus("com.example.sub.monthly", "unique-request-id")
+```
+
+### Orders & Refunds
+
+```go
+// Look up an order
+orderResp, err := api.LookUpOrderID("order-id")
+
+// Get refund history
+refundResp, err := api.GetRefundHistory("transaction-id", "")
+// Paginate with revision token
+nextPage, err := api.GetRefundHistory("transaction-id", refundResp.Revision)
+```
+
+### Notifications
+
+```go
+// Request a test notification
+testResp, err := api.RequestTestNotification()
+
+// Check test notification status
+statusResp, err := api.GetTestNotificationStatus(testResp.TestNotificationToken)
+
+// Get notification history
+historyResp, err := api.GetNotificationHistory(&apple.ASNotificationHistoryRequest{
+    StartDate: 1700000000000,
+    EndDate:   1700100000000,
+})
+```
+
+### Error Handling
+
+API methods return `*ASAPIError` for server-side errors:
+
+```go
+resp, err := api.GetTransactionInfo("invalid-id")
+if err != nil {
+    var apiErr *apple.ASAPIError
+    if errors.As(err, &apiErr) {
+        fmt.Println("Error code:", apiErr.ErrorCode)
+        fmt.Println("Message:", apiErr.ErrorMessage)
+        fmt.Println("HTTP status:", apiErr.HTTPStatus)
+        if apiErr.RetryAfter > 0 {
+            fmt.Println("Retry after:", apiErr.RetryAfter, "seconds")
+        }
+    }
+}
 ```
 
 ---
@@ -299,6 +469,33 @@ resp, err := ck.CreateTokens(apple.CKDatabasePublic, &apple.CKTokensCreateReques
         {APNsToken: "device-token-hex", APNsEnvironment: "production"},
     },
 })
+```
+
+### Push Notifications
+
+Parse incoming APNs payloads from CloudKit subscriptions:
+
+```go
+notification, err := apple.ParseCKPushNotification(apnsPayload)
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Println(notification.CK.ContainerIdentifier)
+fmt.Println(notification.CK.NotificationID)
+
+// Query subscription notification
+if qry := notification.CK.QueryNotification; qry != nil {
+    fmt.Println("Record:", qry.RecordName)
+    fmt.Println("Type:", qry.RecordType)
+    fmt.Println("Reason:", qry.QueryNotificationReason) // 1=created, 2=updated, 3=deleted
+}
+
+// Record zone subscription notification
+if zry := notification.CK.RecordZoneNotification; zry != nil {
+    fmt.Println("Zone:", zry.ZoneID.ZoneName)
+    fmt.Println("Subscription:", zry.SubscriptionID)
+}
 ```
 
 ### Error Handling
